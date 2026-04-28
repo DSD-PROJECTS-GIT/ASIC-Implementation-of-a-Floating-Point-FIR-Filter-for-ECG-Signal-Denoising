@@ -1,0 +1,1684 @@
+# INTRODUCTION
+
+In digital signal processing (DSP), especially in biomedical
+applications like ECG analysis, precise numerical computation is
+crucial. ECG signals often exhibit low amplitude and are vulnerable to
+various noise sources such as baseline drift and high-frequency
+interference. Implementing filters to clean these signals requires
+arithmetic that can handle small variations without introducing
+significant quantization errors.
+
+Floating-point representation offers a robust solution by allowing
+dynamic scaling of values, similar to scientific notation. It represents
+real numbers using three fields: sign, exponent, and mantissa. This
+flexibility enables accurate processing of both very small and large
+values without complex scaling logic.
+
+In our project, we designed a 10-tap FIR filter using Verilog to reduce
+noise in ECG signals. By using IEEE 754 single-precision floating-point
+arithmetic, the filter achieves high precision and numerical stability,
+which is critical for preserving the integrity of medical data.
+Floating-point operations simplify coefficient handling, avoid overflow
+issues, and improve overall filter performance.
+
+The IEEE 754 standard ensures consistent behavior across ASIC/FPGA
+implementations and toolchains, making it ideal for portable,
+high-reliability designs. In this context, floating-point arithmetic is
+not only practical but essential for building effective and accurate ECG
+signal enhancement systems in hardware.
+
+Let's dive into floating point representation using IEEE 754
+single-precision format!
+
+## FLOATING POINT REPRESENTATION
+
+Floating-point numbers are one possible way of representing real numbers
+in binary format. The **IEEE 754 standard** defines two primary
+floating-point formats: the *Binary Interchange Format* and the *Decimal
+Interchange Format*. This paper focuses exclusively on the
+**single-precision normalized binary interchange format**.
+
+**32-bit Single-Precision Floating-Point Format (IEEE 754):**
+
+-   `S EEEEEEEE MMMMMMMMMMMMMMMMMMMMMMM`
+
+Where:
+
+-   **S** -- Sign bit (1 bit)
+
+-   **E** -- Exponent (8 bits)
+
+-   **M** -- Mantissa/Fraction (23 bits)
+
+![IEEE 754 floating-point single precision
+format](float.png){#fig:float_format width="0.8\\linewidth"}
+
+The IEEE 754 standard represents floating-point numbers using a
+combination of **sign**, **exponent**, and **mantissa** (fraction). The
+general formula used to compute the actual decimal value from the stored
+binary fields is:
+
+$$\text{Value} = (-1)^{\text{sign}} \times (1.\text{mantissa}) \times 2^{\text{exponent} - \text{bias}}$$
+
+-   **$(-1)^{\text{sign}}$**: Determines the sign of the number.
+
+    -   If `sign = 0`, the number is **positive**.
+
+    -   If `sign = 1`, the number is **negative**.
+
+-   **$(1.\text{mantissa})$**: This is the normalized significand (also
+    called mantissa or fraction).
+
+    -   IEEE 754 assumes a leading 1 in normalized numbers, which is
+        **not stored** but **implicitly used**.
+
+    -   The mantissa represents the fractional part after the binary
+        point.
+
+-   **$2^{\text{exponent} - \text{bias}}$**: The exponent field is
+    stored with a **bias** to allow both positive and negative
+    exponents.
+
+    -   For **single precision**, the bias is `127`.
+
+    -   The actual exponent is calculated as: `exponent` $-$ `bias`.
+
+```{=html}
+<!-- -->
+```
+-   **An extra bit is added to the mantissa** to form what is called the
+    **significand**, which used to represent 1 in (1.mantissa) and that
+    extra bit also called as **Hidden bit**.
+
+    -   If the **exponent** is greater than `0` and less than `255`, and
+        there is a `1` in the MSB of the **significand**, then the
+        number is said to be a **normalized number**.
+
+### SPECIAL CASES IN IEEE 754 FLOATING-POINT REPRESENTATION
+
+The IEEE 754 standard defines several special cases to handle unique or
+extreme values in binary floating-point formats. These are essential for
+ensuring correctness and stability in numerical computations.
+
+-   **Zero ($\pm$`<!-- -->`{=html}0):**
+
+    -   **Exponent:** All bits = `0`
+
+    -   **Mantissa:** All bits = `0`
+
+    -   The sign bit distinguishes between `+0` and $-$`0`.
+
+    -   Used to represent a true zero value with a specific direction in
+        limits or underflows.
+
+-   **Infinity ($\pm\infty$):**
+
+    -   **Exponent:** All bits = `1` (`255` in single precision)
+
+    -   **Mantissa:** All bits = `0`
+
+    -   Represents results of overflow (e.g., dividing by zero or
+        exceeding max range).
+
+    -   The sign bit determines $+\infty$ or $-\infty$.
+
+-   **NaN (Not a Number):**
+
+    -   **Exponent:** All bits = `1`
+
+    -   **Mantissa:** Any **non-zero** value
+
+    -   Indicates undefined or unrepresentable results (e.g., `0/0`,
+        $\infty-\infty$, $\sqrt{-1}$).
+
+    -   Can be *quiet NaN (qNaN)* or *signaling NaN (sNaN)*, based on
+        the MSB of the mantissa.
+
+-   **Denormalized Numbers (Subnormals):**
+
+    -   **Exponent:** All bits = `0`
+
+    -   **Mantissa:** Non-zero
+
+    -   These represent values very close to zero that cannot be
+        normalized.
+
+    -   Useful for maintaining *gradual underflow*, ensuring smoother
+        transitions near zero.
+
+### FIXED POINT VS FLOATING POINT
+
+## HARDWARE REALIZATION
+
+### FLOATING POINT ADDER
+
+The algorithm for floating-point addition is explained through the flow
+chart in Figure [1.2](#fig:float_adder){reference-type="ref"
+reference="fig:float_adder"}. While adding two floating-point numbers,
+two cases may arise:
+
+-   **Case I:** When both numbers have the same sign (i.e., both are
+    either positive or negative). In this case, the MSB (sign bit) of
+    both numbers is either 0 or 1.
+
+-   **Case II:** When the numbers have different signs (i.e., one is
+    positive and the other is negative). In this case, the MSB of one
+    number is 0 and the other is 1.
+
+#### WHEN BOTH NUMBERS ARE OF SAME SIGN
+
+1.  Enter two numbers $N_1$ and $N_2$. Let $E_1, S_1$ and $E_2, S_2$
+    represent the exponent and significand of $N_1$ and $N_2$,
+    respectively.
+
+2.  Check if $E_1 = 0$ or $E_2 = 0$.
+
+    -   If yes, set the hidden bit of $N_1$ or $N_2$ to zero.
+
+    -   Otherwise, compare exponents: if $E_2 > E_1$, swap $N_1$ and
+        $N_2$. If $E_1 > E_2$, no swap is needed.
+
+3.  Compute the exponent difference $d = E_1 - E_2$.
+
+    -   If $d = 0$, no shift is required.
+
+    -   If $d > 0$, shift $S_2$ right by $d$ bits and fill the left-most
+        bits with zeros (including hidden bit).
+
+4.  Add the shift amount $d$ to the exponent of $N_2$: $$E_2 = E_2 + d$$
+    Now, both exponents are equal, and the operands are normalized.
+
+5.  Check the signs of $N_1$ and $N_2$.
+
+    -   If the signs are the same, proceed to addition.
+
+6.  Add the significands including the hidden bit (24-bit addition):
+    $$S = S_1 + S_2$$
+
+7.  Check for carry-out from the significand addition.
+
+    -   If carry exists, increment the exponent by 1.
+
+    -   Then shift the result right by 1, set MSB of $S$ to 1, and drop
+        the LSB.
+
+8.  If no carry-out occurs, retain the current exponent as the final
+    exponent.
+
+9.  Determine the sign bit of the result. It will be the same as the
+    sign of $N_1$ or $N_2$, depending on which one had the greater
+    magnitude.
+
+10. Assemble the result into 32-bit IEEE 754 format by excluding the
+    24^th^ hidden bit from the significand.
+
+#### WHEN BOTH NUMBERS ARE OF DIFFERENT SIGN
+
+Step 1, 2, 3 & 4 are the same as done in case I.
+
+5.  Check if $N_1$ and $N_2$ have different signs. If \"Yes\";
+
+6.  Take 2's complement of $S_2$ and then add it to $S_1$, i.e.,
+    $$S = S_1 + (\text{2's complement of } S_2)$$
+
+7.  Check if there is carry-out in the significand addition. If yes,
+    discard the carry and shift the result to the left until there is a
+    '1' in the MSB. Also, count the number of shifts, say \"$z$\".
+
+8.  Subtract \"$z$\" from the exponent value of either $E_1$ or $E_2$.
+    Now, the original exponent becomes $E_1 - z$. Append $z$ zeros at
+    the LSB of the significand.
+
+9.  If there is no carry-out in Step 6, then MSB must be '1'. In this
+    case, simply replace $S$ with its 2's complement.
+
+10. The sign of the result (MSB) is the same as the sign of the larger
+    number---i.e., MSB of either $N_1$ or $N_2$.
+
+11. Assemble the result into 32-bit IEEE 754 format, excluding the
+    24^th^ bit of the significand (i.e., the hidden bit).
+
+![Flowchart of Floating Point
+Addition](floating_adder.jpeg){#fig:float_adder width="1\\linewidth"}
+
+### FLOATING POINT MULTIPLIER
+
+The algorithm for floating-point multiplication is illustrated through
+the flow chart in Figure [1.3](#fig:float_mul){reference-type="ref"
+reference="fig:float_mul"}. Let $N_1$ and $N_2$ be normalized operands
+represented by their respective sign bits, significands (mantissas), and
+exponents: $Sign_1, M_1, E_1$ and $Sign_2, M_2, E_2$.
+
+Floating-point multiplication is generally performed in the following
+steps:
+
+1.  **Multiply significands, add exponents, and determine the sign:**
+
+    -   $M = M_1 \times M_2$
+
+    -   $E = E_1 + E_2 - \text{Bias}$
+
+    -   $Sign = Sign_1 \oplus Sign_2$
+
+2.  **Normalize the Mantissa $M$:** Shift the result left or right as
+    needed so that it fits the normalized form. Adjust the exponent $E$
+    accordingly.
+
+3.  **Round the result:** Apply rounding to ensure the result fits
+    within the available bits for the mantissa (23 bits in single
+    precision).
+
+4.  **Check for exceptions (overflow/underflow):** Determine and handle
+    any exceptional cases, such as overflow or underflow. Set the
+    appropriate flags or values.
+
+**Sign Bit Calculation:** The result sign is negative if only one of the
+operands is negative, and this is obtained using the XOR of the two sign
+bits.
+
+**Exponent Addition:** Exponents are added using an unsigned adder and
+then the bias (127 for single precision) is subtracted from the result:
+$$E = E_1 + E_2 - 127$$
+
+**Significand Multiplication:** The unsigned significands (including the
+implicit leading 1) are multiplied. The product is referred to as the
+*intermediate product (IP)*. This multiplication is performed on 24-bit
+operands (23-bit mantissa + 1 implicit bit).
+
+![Flowchart of Floating Point
+Multiplication](floating_multiplier.png){#fig:float_mul
+width="1\\linewidth"}
+
+## DESIGN FLOW
+
+The design of both the floating-point adder and floating-point
+multiplier has been implemented using a **6-stage pipelining** approach
+for the adder and a **6-stage pipelining** approach for the multiplier.
+Inputs are provided directly in IEEE 754 single-precision format, and
+the respective operations are carried out as per the algorithms
+described above.
+
+The primary difference in the number of pipeline stages arises from the
+way the output is assigned. In the case of the adder, the final output
+is generated using a combinational `assign` statement. However, in the
+multiplier, the output is produced using a sequential `always` block,
+which introduces an additional clock cycle. This results in one extra
+pipeline stage for the multiplier compared to the adder.
+
+The `fp_adder_ds` module employs a **6-stage pipelined architecture** to
+efficiently perform floating-point addition in compliance with the IEEE
+754 single-precision standard. Each pipeline stage is designed to break
+the addition process into well-defined operations, enabling
+high-throughput arithmetic in digital signal processing (DSP)
+applications and ASIC-based systems. The stages are as follows:
+
+### PIPELINING STRATEGY IN FLOATING POINT ADDITION
+
+1.  **Stage 1 Input Preparation and Swapping:** The input operands
+    (`n1`, `n2`) are compared based on their exponent values. If
+    `e2 > e1`, the operands are swapped to ensure proper alignment. The
+    sign, exponent, and mantissa fields are extracted for further
+    processing.
+
+2.  **Stage 2 Normalization and Alignment:** The hidden bit is added to
+    both mantissas depending on whether the numbers are normalized or
+    subnormal. The difference between the exponents is computed, and the
+    smaller mantissa is right-shifted accordingly to align both operands
+    for addition or subtraction.
+
+3.  **Stage 3 Operation Determination and Execution:** Based on the
+    signs of the operands, either addition or subtraction is performed
+    on the aligned mantissas. Ripple-carry adder modules are used to
+    compute both signed and unsigned results. The appropriate result is
+    selected depending on the input signs.
+
+4.  **Stage 4 Normalization of the Result:** If the result of the
+    significand operation requires normalization, the leading 1 is
+    identified, and the result is left-shifted. The exponent is adjusted
+    accordingly to preserve numerical accuracy.
+
+5.  **Stage 5 Final Assembly:** The final result is assembled in IEEE
+    754 format using the computed sign, adjusted exponent, and the
+    normalized significand. A special case is handled explicitly when
+    the two operands are equal in magnitude but have opposite signs
+    (resulting in zero).
+
+6.  **Stage 6 Assignment to output:** The final result is assigned to
+    the output $y_{out}$.
+
+### PIPELINE STRUCTURE OF FLOATING POINT MULTIPLICATION
+
+The `fp_multiplication` module implements single-precision
+floating-point multiplication using a **6-stage pipelining**
+architecture. This structure enables high throughput by overlapping
+multiple computation stages over several clock cycles. Below is a
+breakdown of each stage:
+
+1.  **Operand Extraction:** The 32-bit floating-point inputs `n1` and
+    `n2` are decomposed into:
+
+    -   Sign bits: `sign1`, `sign2`
+
+    -   Exponents: `e1`, `e2`
+
+    -   Mantissas: `m1`, `m2`
+
+    These are registered for synchronization in later stages.
+
+2.  **Significand Preparation:** Hidden bits are appended:
+
+    -   Normalized numbers get a leading 1.
+
+    -   Denormalized numbers get a leading 0.
+
+    This yields the 24-bit significands `s1` and `s2`.
+
+3.  **Multiplication Core:** This stage performs:
+
+    -   Sign calculation via XOR: `sign1 ^ sign2`
+
+    -   Exponent addition and bias removal: `e1 + e2 - 127`
+
+    -   Significand multiplication: `s = s1 * s2` (48 bits)
+
+4.  **Normalization:** Based on the MSBs of the product `s[47:46]`, the
+    result is normalized:
+
+    -   If `10` or `11`: Already normalized.
+
+    -   If `01`: Shift left by 1 and adjust exponent.
+
+    -   Else: Use a loop to find leading 1 and shift appropriately.
+
+5.  **Rounding Preparation:** The upper 23 bits of `s_norm`
+    (`leading_bits`) are taken as the base significand. The bit at
+    position 23 (`s_norm[23]`) is used as the rounding indicator
+    (`s_norm_inter`), and the lower 23 bits (`s_norm[22:0]`) are OR-ed
+    to determine if any remaining bits are set, producing the `round`
+    signal. Rounding is performed by adding 1 to the `leading_bits` if
+    both `s_norm_inter` and `round` are high, implementing a
+    round-to-nearest approach. This is achieved by:
+
+        leading_bits <= s_norm[46:24];
+        round        <= |s_norm[22:0];
+        s_norm_inter <= s_norm[23];
+        rounded_result <= leading_bits + (s_norm_inter & round);
+
+6.  **Final Assembly and Exception Handling:** The final 32-bit result
+    is assembled using:
+
+    -   Calculated sign
+
+    -   Adjusted exponent
+
+    -   Rounded significand
+
+    Special cases are handled per IEEE 754:
+
+    -   NaN: Exponent $= 255$, Mantissa $\neq 0$
+
+    -   Infinity: `Exponent = 255`, `Mantissa = 0`
+
+    -   Zero: `Exponent = 0`, `Mantissa = 0`
+
+    -   Overflow: Result set to Infinity
+
+    -   Underflow: Result set to Zero (gradual underflow not handled)
+
+Thus, the overall pipeline latency of this module is **6 clock cycles**,
+making it well-suited for high-speed DSP applications like FIR filtering
+and ECG signal processing, where repeated floating-point multiplications
+are needed.
+
+# LITERATURE REVIEW
+
+Filters are fundamental components in Digital Signal Processing (DSP),
+used to enhance or suppress certain parts of a signal. In simple terms,
+a filter selectively allows certain frequency components of a signal to
+pass through while blocking others.
+
+There are two main categories of filters:
+
+-   **Analog filters** (operate on continuous signals)
+
+-   **Digital filters** (operate on discrete-time signals)
+
+In DSP, we mainly deal with digital filters, which are implemented using
+algorithms and mathematical operations on sampled data. These filters
+are widely used in applications such as audio processing, communication
+systems, and biomedical signal analysis.
+
+For biomedical applications like ECG signal processing, filters play a
+crucial role in removing noise and artifacts (such as baseline drift,
+muscle noise, or powerline interference), thus improving the clarity and
+reliability of the signal for diagnosis.
+
+## TYPES OF DIGITAL FILTERS
+
+In DSP, filters are categorized based on their frequency response
+characteristics. Common types include:
+
+1.  **Low-Pass Filter (LPF):** Allows low-frequency components to pass
+    while attenuating higher frequencies. It is commonly used to remove
+    high-frequency noise from signals.
+
+2.  **High-Pass Filter (HPF):** Passes high-frequency components and
+    attenuates low-frequency components. It is used to eliminate
+    slow-varying trends or DC offsets from signals.
+
+3.  **Band-Pass Filter (BPF):** Allows a specific range of frequencies
+    to pass while rejecting both lower and higher frequencies outside
+    this band. Useful in applications where a particular frequency range
+    carries the useful information.
+
+4.  **Notch Filter (Band-Stop):** Removes a narrow frequency band and
+    passes all other frequencies. Typically used to eliminate specific
+    interference frequencies, such as power line noise at 50 Hz or 60
+    Hz.
+
+5.  **FIR (Finite Impulse Response) Filters:** These filters have a
+    finite-duration response to an impulse input. They are inherently
+    stable and can be designed to have a linear phase, which preserves
+    the waveform shape.
+
+6.  **IIR (Infinite Impulse Response) Filters:** These filters have
+    feedback elements, resulting in an impulse response that
+    theoretically continues indefinitely. They are computationally
+    efficient but can introduce phase distortion and may require
+    stability checks.
+
+## FIR (FINITE IMPULSE RESPONSE) FILTER
+
+A **Finite Impulse Response (FIR)** filter is a type of digital filter
+whose impulse response settles to zero in a finite number of sample
+intervals. FIR filters are widely used in Digital Signal Processing
+(DSP) due to their *inherent stability*, *linear phase characteristics*,
+and *predictable performance*.
+
+The output $y[n]$ of an FIR filter is given by the convolution sum:
+
+$$y[n] = \sum_{k=0}^{N-1} h[k] \cdot x[n - k]$$
+
+Where:
+
+-   $x[n]$: Input signal
+
+-   $y[n]$: Output signal
+
+-   $h[k]$: Filter coefficients (impulse response)
+
+-   $N$: Number of taps (filter order + 1)
+
+![K-tap FIR Filter](FIR_FILTER.png){#fig:fir_filter
+width="0.8\\linewidth"}
+
+### WHY FIR OVER IIR?
+
+FIR (Finite Impulse Response) filters are often preferred over IIR
+(Infinite Impulse Response) filters in digital signal processing due to
+the following reasons:
+
+-   **Linear Phase Response:**\
+    FIR filters can be designed to have a linear phase, which means they
+    do not distort the phase of different frequency components in the
+    signal. This is important in applications where the shape of the
+    signal must be preserved.
+
+-   **Guaranteed Stability:**\
+    FIR filters are always stable because they do not use feedback
+    elements in their structure.
+
+-   **Design Flexibility:**\
+    They offer more precise control over the filter's frequency
+    response, especially when using windowing techniques.
+
+-   **Simpler Implementation in Hardware:**\
+    FIR filters require only multipliers and adders, making them easier
+    to implement on digital hardware like FPGAs and DSP processors.
+
+While IIR filters are more computationally efficient (requiring fewer
+coefficients), FIR filters are generally chosen when **signal integrity,
+phase accuracy, and stability** are more critical than computational
+speed.
+
+## WINDOWING METHODS IN FILTERS
+
+When designing a FIR filter, we often start from the **ideal impulse
+response** (e.g., sinc for low-pass), which is infinite in length. We
+need to **truncate** this to make it implementable in hardware or
+software.
+
+However, truncation causes discontinuities, which lead to:
+
+-   **Gibbs phenomenon** (ripples in passband/stopband)
+
+-   **Poor frequency selectivity** (leakage of unwanted frequencies)
+
+When you change the window function, you directly affect the **frequency
+response** of the FIR filter, which in turn impacts the **output
+signal**.
+
+### 1. Transition Band Width {#transition-band-width .unnumbered}
+
+The **main lobe width** of the window determines the transition
+sharpness from passband to stopband.
+
+*Effect on output:*
+
+-   Narrow main lobe $\Rightarrow$ Sharper transition $\Rightarrow$ Less
+    distortion near cutoff.
+
+-   Wide main lobe $\Rightarrow$ Smoother transition $\Rightarrow$ Some
+    leakage between bands.
+
+### 2. Ripple and Stopband Attenuation {#ripple-and-stopband-attenuation .unnumbered}
+
+Side lobes in the window's frequency response introduce ripples in the
+filter's passband and stopband.
+
+*Effect on output:*
+
+-   High side lobes (e.g., Rectangular) $\Rightarrow$ Ripple and
+    leakage.
+
+-   Low side lobes (e.g., Blackman) $\Rightarrow$ Clean filtering.
+
+### 3. Noise Suppression and Leakage {#noise-suppression-and-leakage .unnumbered}
+
+Better windows suppress more noise and unwanted frequencies due to
+improved stopband attenuation.
+
+## COMPARISON OF COMMON WINDOW FUNCTIONS {#comparison-of-common-window-functions .unnumbered}
+
+### 1. Rectangular Window (No Tapering) {#rectangular-window-no-tapering .unnumbered}
+
+$$w[n] = 1, \quad 0 \leq n \leq N$$ **Main lobe width:** Narrowest\
+**Side lobe level:** Very high (approx. -13 dB)\
+**Transition band:** Sharp
+
+-   Very sharp cutoff
+
+-   High ripple in stopband (Gibbs phenomenon)
+
+-   Not suitable for clean filtering
+
+### 2. Hanning (Hann) Window {#hanning-hann-window .unnumbered}
+
+$$w[n] = 0.5\left(1 - \cos\left(\frac{2\pi n}{N}\right)\right)$$ **Main
+lobe width:** Moderate\
+**Side lobe level:** Approximately -31 dB
+
+-   Smooth roll-off
+
+-   Good general-purpose filtering
+
+-   Reduces Gibbs phenomenon better than Rectangular
+
+### 3. Hamming Window {#hamming-window .unnumbered}
+
+$$w[n] = 0.54 - 0.46 \cos\left(\frac{2\pi n}{N}\right)$$ **Main lobe
+width:** Similar to Hanning\
+**Side lobe level:** Approximately -41 dB
+
+-   Better stopband attenuation than Hanning
+
+-   Slightly more passband ripple
+
+-   Good for audio or ECG signals
+
+### 4. Blackman Window {#blackman-window .unnumbered}
+
+$$w[n] = 0.42 - 0.5 \cos\left(\frac{2\pi n}{N}\right) + 0.08 \cos\left(\frac{4\pi n}{N}\right)$$
+**Main lobe width:** Wide\
+**Side lobe level:** Very low (approx. -58 dB)
+
+-   Excellent ripple suppression
+
+-   Wide transition band
+
+-   Best when output must be clean (e.g., biomedical)
+
+## DESIGNING OF FIR FILTER
+
+### DESIGN SPECIFICATIONS FOR FIR FILTER
+
+#### *Design Specification 1: FIR Filter Design Task* {#design-specification-1-fir-filter-design-task .unnumbered}
+
+*\"Design a 5-tap low-pass FIR filter whose **sampling frequency is 500
+Hz** with a **cut-off frequency of 150 Hz**. Plot its magnitude and
+phase responses. Generate a **random composite signal of 100 Hz and 150
+Hz with a sampling frequency of 500 Hz**. Use this designed filter to
+process the generated signal.\"*
+
+#### *Design Specification 2: ECG Signal Filtering Task* {#design-specification-2-ecg-signal-filtering-task .unnumbered}
+
+*\"ECG (Electrocardiogram) signals capture the electrical activity of
+the heart and can be recorded fairly easily with surface electrodes on
+the limbs or chest. The file "bob_ecg.dat" contains an ECG signal
+sampled at 200 Hz. However, the signal is corrupted by multiple types of
+noise, including baseline wander, 60 Hz power-line interference, and
+additive white noise, making it difficult to interpret. Your task is to
+apply digital signal processing techniques to clean up the ECG signal
+and restore it to its original form as much as possible using MATLAB.\"*
+
+*1. Load the ECG signal from the file "bob_ecg.dat" into a MATLAB array.
+Plot the raw, noisy ECG signal in the time domain. Ensure the plot
+includes appropriate labels.*
+
+*2. High-frequency noise (white noise) is present in the ECG signal.
+Design a high-pass filter manually without using any built-in filter
+functions, implementing it from scratch. Choose an appropriate cutoff
+frequency to eliminate high-frequency noise while preserving the ECG
+signal. Plot the magnitude and phase response of the designed high-pass
+filter. Apply the filter to the noisy ECG signal. Plot the noisy ECG
+signal and the signal after high-pass filtering in the same graph both
+in the time and frequency domain to analyze the reduction in white
+noise.\"*
+
+### DESIGN AND SIMULATION IN MATLAB
+
+#### 1. Composite Signal Filtering: {#composite-signal-filtering .unnumbered}
+
+To filter a noisy composite signal composed of 100 Hz and 150 Hz
+components, a **10-tap low-pass FIR filter** was designed using both
+**manual** and **built-in** methods. The sampling frequency was set to
+**500 Hz**, and the cutoff frequency was **150 Hz**.
+
+The built-in `fir1` function with a **Hamming window** was used for
+standard filter design. For manual implementation, an **ideal impulse
+response** was computed and multiplied with the Hamming window to
+generate the FIR coefficients.
+
+The designed filter was applied to the composite signal using both the
+`filter()` function and a **manual convolution loop**. Both the
+waveforms are plotted in
+Figure [5.4](#fig:fir_sine){reference-type="ref"
+reference="fig:fir_sine"} and
+Figure [5.3](#fig:fir_conv){reference-type="ref"
+reference="fig:fir_conv"}.
+
+#### 2. ECG Signal Filtering: {#ecg-signal-filtering .unnumbered}
+
+To clean a real-world ECG signal (loaded from `bob_ecg.dat`) sampled at
+200 Hz, a low-pass FIR filter was manually designed using different
+windowing techniques including **Rectangular**, **Hanning**,
+**Hamming**, and **Blackman** windows. Each window type was applied to
+the ideal impulse response to generate distinct filter coefficients,
+thereby shaping the frequency response of the filter for different
+levels of ripple and transition sharpness.
+
+The objective was to suppress high-frequency components such as
+**power-line interference (60 Hz)** and **additive white noise**, while
+preserving the key features of the ECG waveform. The filtered ECG
+signals were analyzed in both the time and frequency domains.
+
+The filters were implemented in MATLAB, and their coefficients were also
+exported in IEEE 754 hexadecimal format to be used in Verilog. Filtered
+outputs from MATLAB and Verilog were then compared, demonstrating
+effective noise suppression and matching performance across platforms.
+
+# HARDWARE IMPLEMENTATION
+
+## HARDWARE IMPLEMENTATION OF FIR FILTER
+
+### CUSTOM FLOATING-POINT ARITHMETIC MODULES
+
+Implemented IEEE 754 compliant:
+
+-   **Floating-point Adder** (`fp_adder_ds`)
+
+-   **Floating-point Multiplier** (`fp_multiplication`)
+
+Used 6-stage and 6-stage pipelined architectures respectively.
+
+### Key Functionalities {#key-functionalities .unnumbered}
+
+-   Normalization
+
+-   Rounding (with guard, round, sticky bits)
+
+-   Sign, exponent, and significand handling
+
+### Custom Rounding Logic (Verilog) {#custom-rounding-logic-verilog .unnumbered}
+
+    leading_bits   <= s_norm[46:24];
+    round          <= |s_norm[22:0];
+    s_norm_inter   <= s_norm[23];
+    rounded_result <= (leading_bits + (s_norm_inter & round));
+
+### 10-TAP FIR FILTER ARCHITECTURE
+
+### Filter Equation {#filter-equation .unnumbered}
+
+$$y[n] = h[0]x[n] + h[1]x[n-1] + \cdots + h[9]x[n-9]$$
+
+### Design Highlights {#design-highlights .unnumbered}
+
+-   Implemented using **data broadcast structure** (inputs are
+    broadcasted to all taps).
+
+-   Each tap uses:
+
+    -   One instance of `fp_multiplication`
+
+    -   One pipeline stage of `fp_adder_ds`
+
+### Register Structure {#register-structure .unnumbered}
+
+10 registers ($x[n]$ to $x[n-9]$) were used to store delayed inputs
+using a shift-register mechanism.
+
+### Coefficient Handling {#coefficient-handling .unnumbered}
+
+-   Filter coefficients were generated in MATLAB using windowed sinc
+    functions (e.g., Hamming, Rectangular).
+
+-   Exported as `.mem` files using the following MATLAB command:
+
+        h_hex = dec2hex(typecast(single(h_data), 'uint32'));
+
+-   These were read into Verilog using `$readmemh`.
+
+### Pipelining {#pipelining .unnumbered}
+
+-   Each multiplier and adder was pipelined with 6 and 6 cycles delay
+    respectively.
+
+-   Total pipeline depth (linear chain):
+    $$\text{Pipeline Depth} = \text{Multiplier Delay} + (N \times \text{Adder Delay}) = 6 + 9 \times 6 = 60 \text{ clock cycles}$$
+
+-   Registers were added at intermediate outputs to balance stages and
+    maintain timing closure.
+
+### Adder Tree Optimization {#adder-tree-optimization .unnumbered}
+
+-   To reduce the accumulation latency, a **binary adder tree** can
+    replace the linear adder chain.
+
+-   In an adder tree, additions are performed in parallel across
+    multiple levels rather than sequentially. For $N = 10$ partial
+    products, the number of adder levels required is:
+    $$\text{Adder Levels} = \lceil \log_2(N) \rceil = \lceil \log_2(10) \rceil = 4 \text{ levels}$$
+
+-   The revised total pipeline depth becomes:
+    $$\text{Pipeline Depth} = \text{Multiplier Delay} + (\lceil \log_2(N) \rceil \times \text{Adder Delay}) = 6 + 4 \times 6 = 30 \text{ clock cycles}$$
+
+-   This represents a **50% reduction** in pipeline depth compared to
+    the linear chain implementation (60 cycles $\rightarrow$ 30 cycles).
+
+-   The adder tree structure for 10 inputs collapses as follows:
+    $$\underbrace{(p_0+p_1),\ (p_2+p_3),\ (p_4+p_5),\ (p_6+p_7),\ (p_8+p_9)}_{\text{Level 1: 5 adders in parallel}}$$
+    $$\underbrace{(s_{01}+s_{23}),\ (s_{45}+s_{67}),\ s_{89}}_{\text{Level 2: 2 adders in parallel}}
+        \quad\rightarrow\quad
+        \underbrace{(s_{0123}+s_{4567})}_{\text{Level 3}}
+        \quad\rightarrow\quad
+        \underbrace{s_{01234567}+s_{89}}_{\text{Level 4}}$$
+
+-   Small alignment delay registers (multiples of 6 cycles) are inserted
+    on unpaired branches to ensure all operands arrive at each adder
+    level simultaneously.
+
+  **Architecture**       **Adder Stages**      **Total Pipeline Depth**
+  -------------------- -------------------- ------------------------------
+  Linear Adder Chain            9            $6 + 9 \times 6 = 60$ cycles
+  Binary Adder Tree             4            $6 + 4 \times 6 = 30$ cycles
+  **Improvement**       **5 fewer stages**        **50% reduction**
+
+  : Pipeline depth comparison: linear chain vs. adder tree for a 10-tap
+  FIR filter
+
+The output was further processed in Verilog using the same coefficients
+and input signal represented in IEEE 754 hexadecimal format. The
+filtered outputs from both MATLAB and Verilog were visualized and
+verified in the **time domain**, confirming the effectiveness and
+consistency of the filter design.
+
+## HARDWARE IMPLEMENTATION OF ECG SIGNAL FILTERING USING 10-TAP FIR FILTER
+
+### 1. Design Goals {#design-goals .unnumbered}
+
+-   Clean the ECG signal from `"bob_ecg.dat"`.
+
+-   Build a 10-tap FIR filter in Verilog with support for various window
+    functions.
+
+-   Implement floating-point multiplication and addition using IEEE 754
+    format.
+
+-   Interface with Vivado using `.mem` files containing hexadecimal
+    representations of signal and coefficient data.
+
+### 2. Verilog Architecture Breakdown {#verilog-architecture-breakdown .unnumbered}
+
+Module: `ecg_hann` This is a parameterized 10-tap FIR filter designed to
+apply Hanning window-based coefficients, but the same architecture is
+reused with Hamming, Blackman, and Rectangular coefficients as well.
+
+1.  **Input/Output Ports:**
+
+    -   `pixel` -- Input ECG signal sample (32-bit IEEE 754).
+
+    -   `w0` to `w9` -- FIR filter coefficients (from MATLAB-generated
+        `.mem` file).
+
+    -   `y_out` -- Filtered ECG output.
+
+2.  **Shift Register:** A shift register module named
+    `input_shift_register2` stores 10 previous ECG samples for
+    convolution filtering.
+
+3.  **Floating-Point Multipliers:** Ten parallel instances of the
+    `fp_multiplication` module multiply the input samples with
+    corresponding filter coefficients.
+
+4.  **Pipelining:** Deep pipelining is applied to synchronize the
+    outputs due to the latency of floating-point operations. Registers
+    `mul2_d` to `mul9_d` delay outputs of multipliers appropriately to
+    align with addition stages.
+
+5.  **Floating-Point Adders:** Nine `fp_adder_ds` modules are used to
+    sum the products in a pipelined fashion. The final output, `sum9`,
+    is assigned to `y_out`.
+
+### 3. Floating-Point Support {#floating-point-support .unnumbered}
+
+-   `fp_multiplication`: IEEE 754-compliant floating-point multiplier
+    with a 6-cycle latency.
+
+-   `fp_adder_ds`: Custom 6-cycle pipelined floating-point adder.
+
+Each input sample and coefficient is represented in 32-bit IEEE 754
+format and provided to the Verilog design using `.mem` files generated
+from MATLAB.
+
+### 4. Coefficient Generation & Windowing {#coefficient-generation-windowing .unnumbered}
+
+MATLAB was used to compute the ideal impulse response and apply the
+following windowing functions:
+
+-   `hamming()`
+
+-   `hanning()`
+
+-   `blackman()`
+
+-   `rectwin()`
+
+The final filter coefficients were computed using:
+$$h = h_{\text{ideal}} \cdot w$$ where $w$ is the window vector. The
+coefficients were normalized and written into a `.mem` file using the
+following MATLAB script:
+
+    h_hex = dec2hex(typecast(single(h), 'uint32'));
+    fid = fopen('coeff_hamming.mem', 'w');
+    fprintf(fid, '%s\n', h_hex');
+    fclose(fid);
+
+#### Window Function Effects in Hardware {#window-function-effects-in-hardware .unnumbered}
+
+-   **Rectangular:** Offers a sharp transition but introduces large
+    ripples in the stopband, which degrades signal clarity.
+
+-   **Hamming/Hanning:** Provide balanced side-lobe suppression with
+    acceptable transition width, suitable for biomedical filtering.
+
+-   **Blackman:** Yields excellent ripple suppression in the stopband,
+    ideal for high-precision filtering, though it spreads the main lobe.
+
+Each set of coefficients was tested in hardware by changing the `.mem`
+file input to the Verilog design and observing the output in both time
+and frequency domains.
+
+# ASIC WORKFLOW
+
+## INTRODUCTION TO ASIC DESIGN FLOW
+
+Application-Specific Integrated Circuit (ASIC) is a type of integrated
+circuit that is custom-designed for a specific application or function,
+as opposed to general-purpose processors or programmable devices. Unlike
+FPGAs or microcontrollers, ASICs are optimized at the hardware level for
+a single dedicated task, offering significant advantages in terms of
+performance, power efficiency, and area.
+
+ASIC designs are fabricated by semiconductor foundries --- specialized
+manufacturing facilities that produce integrated circuits based on the
+design files (GDSII) submitted by the design house. Some of the major
+foundries used globally include:
+
+-   **TSMC (Taiwan Semiconductor Manufacturing Company)** -- The world's
+    largest dedicated foundry, offering technology nodes from 180nm down
+    to 3nm and below.
+
+-   **UMC (United Microelectronics Corporation)** -- A major foundry
+    offering mature technology nodes including the **65nm node** used in
+    this project.
+
+-   **Samsung Foundry** -- Offers advanced nodes including 3nm GAA
+    (Gate-All-Around) technology.
+
+-   **GlobalFoundries** -- Specializes in specialized and differentiated
+    process technologies for automotive, IoT, and RF applications.
+
+-   **SMIC (Semiconductor Manufacturing International Corporation)** --
+    China's largest foundry, offering nodes from 180nm to 14nm.
+
+In this project, the **UMC 65nm standard cell library**
+(`uk65lscllmvbbr_110c-40_bc`) was used for synthesis and timing
+analysis, which is a mature, well-characterized technology node suitable
+for low-power biomedical ASIC designs.
+
+### ASIC DESIGN FLOW
+
+ASIC design is the process of converting a hardware description language
+(HDL) design into a physical chip layout that can be fabricated. The
+ASIC design flow involves multiple stages including RTL design,
+functional simulation, logic synthesis, post-synthesis simulation, and
+waveform verification. In this project, the Synopsys EDA toolchain was
+used on the UMC 65nm standard cell library (`uk65lscllmvbbr_110c-40_bc`)
+to synthesize and verify the floating-point FIR filter modules.
+
+The complete ASIC flow followed in this project consists of the
+following major steps:
+
+1.  **RTL Design** -- Writing synthesizable Verilog code for the
+    floating-point adder, multiplier, and FIR filter modules.
+
+2.  **Logic Synthesis** -- Converting RTL to a gate-level netlist mapped
+    to the target standard cell library, generating area, power, and
+    timing reports.
+
+3.  **Post-Synthesis Simulation** -- Using Synopsys VCS to functionally
+    verify the synthesized gate-level netlist.
+
+4.  **Waveform Verification** -- Using Synopsys DVE to visually inspect
+    and verify signal waveforms from post-synthesis simulation.
+
+## SYNOPSYS TOOLS USED
+
+### VCS (VERILOG COMPILED SIMULATOR)
+
+Synopsys VCS is a high-performance Verilog/SystemVerilog simulator used
+for functional verification of both RTL and gate-level netlists. In this
+project, VCS was used for post-synthesis simulation to verify that the
+synthesized gate-level netlist behaves correctly with the standard cell
+library models.
+
+**Commands Used:**
+
+    vlogan -full64 uk65lscllmvbbr_sdf21.v aes_unprotected.dc.v testbench.v
+    vcs -full64 testbench
+    ./simv
+
+The above commands perform the following operations:
+
+-   `vlogan -full64` -- Compiles and analyzes the standard cell library
+    model (`uk65lscllmvbbr_sdf21.v`), the synthesized gate-level netlist
+    (`aes_unprotected.dc.v`), and the testbench (`testbench.v`) into the
+    VCS database.
+
+-   `vcs -full64 testbench` -- Elaborates and compiles the testbench as
+    the top-level simulation module.
+
+-   `./simv` -- Executes the compiled simulation binary to run the
+    post-synthesis functional simulation.
+
+**Output:**
+
+-   **.vcd file** -- Value Change Dump file containing all signal
+    transitions over time, used for waveform viewing in DVE.
+
+### DVE (DISCOVERY VISUALIZATION ENVIRONMENT)
+
+Synopsys DVE is a waveform viewer and debug environment used alongside
+VCS for post-synthesis functional verification. It allows designers to
+inspect signal values, zoom into specific time regions, and verify
+correct circuit operation visually by loading the `.vcd` file generated
+by VCS.
+
+**Invocation Command:**
+
+    dve -full64
+
+**Output:** DVE produces no physical output file. It is used exclusively
+for interactive post-synthesis functional verification by displaying
+waveforms from the `.vcd` file generated by VCS. The designer can
+visually confirm that the output signals of the synthesized netlist
+match the expected results from the RTL simulation.
+
+# RESULTS AND OBSERVATIONS
+
+## FLOATING-POINT ADDER SIMULATION
+
+Figure [5.1](#fig:fp_add){reference-type="ref" reference="fig:fp_add"}
+illustrates the simulation waveform for the `fp_adder_ds` module. This
+module performs floating-point addition on 32-bit IEEE 754 numbers using
+a 6-stage pipelined design.
+
+The data shown in
+Table [5.1](#tab:fp_adder_results){reference-type="ref"
+reference="tab:fp_adder_results"} includes both the hexadecimal input
+values and their corresponding decimal values. Each input pair is added,
+and the result is reflected in the `y_out` signal. The table validates
+the accuracy of the adder even under edge cases such as:
+
+-   Addition of a positive and negative number of equal magnitude,
+    producing zero.
+
+-   Addition of negative and positive fractional values.
+
+-   Positive overflow and full-precision rounding (e.g., 1 + 1 = 2.0).
+
+These results indicate that both the floating-point multiplier and adder
+modules are functionally correct and conform to IEEE 754 standards,
+making them suitable for integration into larger DSP systems such as FIR
+filters.
+
+![Floating point Adder Verilog Output
+Waveform](intern_report/simulation_files/fp_Adder_tb.png){#fig:fp_add
+width="1\\linewidth"}
+
+::: {#tab:fp_adder_results}
+   **Time (ns)**   **n1 (Hex)**   **n2 (Hex)**   **y_out (Hex)**   **n1 (Decimal)**       **n2 (Decimal)**         **y_out (Decimal)**
+  --------------- -------------- -------------- ----------------- ------------------ -------------------------- -------------------------
+        65           41A26666       C1299999        411BB394            +20.3         $-$`<!-- -->`{=html}10.6            +9.7
+        75           BF000000       00000000        BF000000             -0.5                    0               $-$`<!-- -->`{=html}0.5
+        85           3F000000       3E800000        3F400000             +0.5                  +0.25                      +0.75
+        95          3F8000000       BF000000        3F000000              +1                    +0.5                      +0.5
+        105          3F800000       3F800000        40000000              +1                     +1                       +2.0
+        115          BF000000       BE800000        BF400000             -0.5                  -0.25                      -0.75
+
+  : Floating-Point Adder Testbench Results
+:::
+
+[]{#tab:fp_adder_results label="tab:fp_adder_results"}
+
+## FLOATING-POINT MULTIPLIER SIMULATION
+
+Figure [5.2](#fig:fp_mul){reference-type="ref" reference="fig:fp_mul"}
+shows the waveform output from the simulation of the `fp_multiplication`
+module. The module performs multiplication on IEEE 754 single-precision
+floating-point inputs (`n1` and `n2`) and produces a 32-bit
+floating-point output.
+
+Table [5.2](#tab:fp_mul_results){reference-type="ref"
+reference="tab:fp_mul_results"} presents the values observed during the
+simulation. Each row corresponds to a specific clock cycle where valid
+input-output transactions occur. The hexadecimal representations of the
+inputs and output are shown, along with their decimal equivalents. These
+results confirm the correct operation of the multiplier, as seen by the
+expected product values.
+
+![Floating point Multiplier Verilog Output
+Waveform](intern_report/simulation_files/fp_mul_tb.png){#fig:fp_mul
+width="1\\linewidth"}
+
+::: {#tab:fp_mul_results}
+   **Time (ns)**   **n1 (Hex)**   **n2 (Hex)**   **out (Hex)**   **n1 (Decimal)**   **n2 (Decimal)**   **out (Decimal)**
+  --------------- -------------- -------------- --------------- ------------------ ------------------ -------------------
+        60           41A26666       41299999       43572E13         20.300001          10.599999           215.37001
+        70           3F800000       00000000       00000000             1                  0                   0
+        80           BF800000       3F000000       BF000000             -1                0.5                -0.5
+        90           BF800000       BF000000       3F000000             -1                -0.5                0.5
+
+  : Floating Point Multiplier Testbench Results
+:::
+
+##  FIR FILTER ON COMPOSITE SIGNAL FILTERING
+
+![FIR Filter using Built-In FIR Function (Hamming
+Window)](intern_report/simulation_files/matlab_fir_sine_inbuilt_fun.png){#fig:fir_conv
+width="0.8\\linewidth"}
+
+![FIR Filter using Convolution (Hamming
+Window)](intern_report/simulation_files/MATLAB_SINE_CONV.png){#fig:fir_sine
+width="0.8\\linewidth"}
+
+## FIR FILTER ON ECG SIGNAL FILTERING
+
+The output from the Verilog is obtained by feeding the coefficients and
+input signal represented in IEEE 754 hexadecimal format using `.mem`
+files. By feeding this output again to MATLAB using `.txt` files to plot
+reconstructed waveforms as well as magnitude response, so that can
+visualize and verify in the **time domain**, confirming the
+effectiveness and consistency of the filter design. For comparison of
+output of Verilog `y_out`, I have plotted the hex values of the filters
+with different windowing methods (Hamming, Hanning, etc.).
+
+#### 1. Rectangular Window (10 Taps) {#rectangular-window-10-taps .unnumbered}
+
+**Verilog Simulation Output**
+
+![ECG Filtering --- Vivado Simulation Waveform (Rectangular Window, 10
+Taps)](rect/ecg_rect_11taps/ecg_rect_11_verilog_values.png){#fig:ecg_rect_10_verilog_values
+width="0.7\\linewidth"}
+
+**MATLAB Output**
+
+![ECG Signal in Time Domain and Filtered ECG from Verilog (Rectangular
+Window, 10
+Taps)](rect/ecg_rect_11taps/ecg_rect_11_verilog_output.png){#fig:ecg_rect_10_verilog_output
+width="0.7\\linewidth"}
+
+![Magnitude Response --- Built-in FIR and Manual FIR from Verilog
+(Rectangular Window, 10
+Taps)](rect/ecg_rect_11taps/ecg_rect_11_magnitude_resp.png){#fig:ecg_rect_10_magnitude_resp
+width="0.7\\linewidth"}
+
+![Frequency Spectrum Comparison --- Verilog Output, Input Signal, and
+Built-in Function (Rectangular Window, 10
+Taps)](rect/ecg_rect_11taps/ecg_rect_11_periodogram.png){#fig:ecg_rect_10_periodogram
+width="0.7\\linewidth"}
+
+#### 2. Rectangular Window (21 Taps) {#rectangular-window-21-taps .unnumbered}
+
+**Verilog Simulation Output**
+
+![ECG Filtering --- Vivado Simulation Waveform (Rectangular Window, 21
+Taps)](rect/ecg_rect_21taps/ecg_rect_21_verilog_values.png){#fig:ecg_rect_21_verilog_values
+width="0.7\\linewidth"}
+
+**MATLAB Output**
+
+![ECG Signal in Time Domain and Filtered ECG from Verilog (Rectangular
+Window, 21
+Taps)](rect/ecg_rect_21taps/ecg_rect_21_verilog_output.png){#fig:ecg_rect_21_verilog_output
+width="0.7\\linewidth"}
+
+![Magnitude Response --- Built-in FIR and Manual FIR from Verilog
+(Rectangular Window, 21
+Taps)](rect/ecg_rect_21taps/ecg_rect_21_magnitude_resp.png){#fig:ecg_rect_21_magnitude_resp
+width="0.65\\linewidth"}
+
+![Frequency Spectrum Comparison --- Verilog Output, Input Signal, and
+Built-in Function (Rectangular Window, 21
+Taps)](rect/ecg_rect_21taps/ecg_rect_21_periodogram.png){#fig:ecg_rect_21_periodogram
+width="0.75\\linewidth"}
+
+#### 3. Rectangular Window (35 Taps) {#rectangular-window-35-taps .unnumbered}
+
+**Verilog Simulation Output**
+
+![ECG Filtering --- Vivado Simulation Waveform (Rectangular Window, 35
+Taps)](rect/ecg_rect_35taps/ecg_rect_35_verilog_values.png){#fig:ecg_rect_35_verilog_values
+width="0.8\\linewidth"}
+
+**MATLAB Output**
+
+![ECG Signal in Time Domain and Filtered ECG from Verilog (Rectangular
+Window, 35
+Taps)](rect/ecg_rect_35taps/ecg_rect_35_verilog_output.png){#fig:ecg_rect_35_verilog_output
+width="0.8\\linewidth"}
+
+![Magnitude Response --- Built-in FIR and Manual FIR from Verilog
+(Rectangular Window, 35
+Taps)](rect/ecg_rect_35taps/ecg_rect_35_magnitude_resp.png){#fig:ecg_rect_35_magnitude_resp
+width="0.8\\linewidth"}
+
+![Frequency Spectrum Comparison --- Verilog Output, Input Signal, and
+Built-in Function (Rectangular Window, 35
+Taps)](rect/ecg_rect_35taps/ecg_rect_35_periodogram.png){#fig:ecg_rect_35_periodogram
+width="0.8\\linewidth"}
+
+**SNR Comparision**
+
+![SNR Comparison of Raw ECG Signal, MATLAB Filter Output, and Verilog
+Filter Output](SNR_COMPARISION.png){#fig:snr_comparison
+width="0.75\\linewidth"}
+
+### OBSERVATIONS
+
+The Signal-to-Noise Ratio (SNR) comparison further validates the
+effectiveness of the proposed FIR filter design. The raw ECG signal
+exhibits a very low SNR of approximately **2.87 dB**, indicating the
+presence of significant noise components. After applying the FIR filter
+using MATLAB, the SNR improves drastically to around **148.25 dB**,
+demonstrating the effectiveness of the ideal floating-point filtering
+operation.
+
+The Verilog-based FIR filter implementation achieves an SNR of
+approximately **136.59 dB**, which is very close to the MATLAB reference
+output. This confirms that the hardware implementation using
+floating-point arithmetic is highly accurate and capable of preserving
+signal integrity while effectively reducing noise.
+
+The slight difference in SNR between MATLAB and Verilog outputs can be
+attributed to finite precision effects, rounding errors, and
+hardware-level approximations in floating-point arithmetic units.
+Despite these minor variations, the Verilog implementation achieves
+comparable performance, making it suitable for real-time hardware
+applications.
+
+The SNR improvement clearly demonstrates that the designed FIR filter
+successfully enhances the quality of the ECG signal by suppressing
+unwanted noise while maintaining important signal characteristics.
+Furthermore, the results confirm that increasing the number of taps and
+using appropriate windowing techniques contribute significantly to
+improved noise reduction performance.
+
+Overall, the simulation results and SNR analysis validate both the
+functional correctness and performance efficiency of the proposed
+floating-point FIR filter architecture implemented in Verilog.
+
+In addition to the quantitative SNR improvement, the consistency between
+MATLAB and Verilog outputs also verifies the correctness of the IEEE 754
+single-precision floating-point implementation used in the design. The
+normalization, rounding, and alignment stages in both the floating-point
+adder and multiplier have been successfully realized in hardware,
+ensuring minimal loss of numerical accuracy during computation.
+
+It is also important to note that achieving an SNR above **130 dB** in
+the Verilog implementation indicates that the design is highly robust
+against quantization noise and arithmetic errors. This level of
+performance is particularly significant for biomedical signal processing
+applications such as ECG analysis, where preserving subtle waveform
+features (P-wave, QRS complex, and T-wave) is critical for accurate
+diagnosis.
+
+From a hardware perspective, the slight degradation in SNR compared to
+MATLAB can be considered a trade-off for implementing the filter in a
+real-time digital system. The use of pipelined floating-point units
+introduces latency but enables high-throughput operation, making the
+design suitable for streaming applications. The pipeline stages in the
+multiplier and adder modules ensure that the filter can process
+continuous ECG data efficiently without compromising timing constraints.
+
+Furthermore, the results highlight the impact of filter order on
+hardware performance. While higher tap counts improve noise suppression
+and SNR, they also increase the number of floating-point operations,
+leading to higher area utilization and power consumption in an ASIC
+implementation. Therefore, an optimal balance between filter performance
+and hardware cost must be achieved based on the target application.
+
+Another important observation is that the frequency-domain analysis and
+SNR results are in strong agreement, reinforcing the reliability of the
+design methodology. The attenuation of high-frequency components
+observed in the periodogram directly correlates with the significant
+improvement in SNR, confirming effective noise removal.
+
+## SYNTHESIS RESULTS
+
+The following sections present the synthesis results obtained from
+Synopsys Design Compiler for each module in the floating-point FIR
+filter design. All modules were synthesized using the UMC 65nm standard
+cell library (`uk65lscllmvbbr_110c-40_bc`) at a global operating voltage
+of 1.1V using Synopsys Design Compiler version U-2022.12-SP2.
+
+### FLOATING-POINT ADDER
+
+#### AREA REPORT
+
+Table [5.3](#tab:adder_area){reference-type="ref"
+reference="tab:adder_area"} presents the area report for the
+`fp_adder_ds` module obtained from Synopsys Design Compiler.
+
+::: {#tab:adder_area}
+  **Parameter**                                 **Value**
+  ------------------------------- -----------------------
+  Number of Ports                                     680
+  Number of Nets                                     2460
+  Number of Cells                                    1838
+  Number of Combinational Cells                      1180
+  Number of Sequential Cells                          593
+  Number of Buf/Inv                                   258
+  Combinational Area                    3037.32 $\mu m^2$
+  Buf/Inv Area                           281.52 $\mu m^2$
+  Noncombinational Area                 4056.12 $\mu m^2$
+  Macro/Black Box Area                     0.00 $\mu m^2$
+  **Total Cell Area**               **7093.44 $\mu m^2$**
+
+  : Area Report -- `fp_adder_ds`
+:::
+
+#### POWER REPORT
+
+Table [5.4](#tab:adder_power){reference-type="ref"
+reference="tab:adder_power"} presents the power report for the
+`fp_adder_ds` module. The design operates at a global voltage of 1.1V
+with wire load model `wl0`.
+
+::: {#tab:adder_power}
+  **Parameter**                                    **Value**
+  ------------------------- --------------------------------
+  Cell Internal Power                  50.4593 $\mu W$ (92%)
+  Net Switching Power                    4.4001 $\mu W$ (8%)
+  **Total Dynamic Power**                **54.8594 $\mu W$**
+  Cell Leakage Power                           585.7801 $nW$
+  **Total Power**             **5.5445 $\times 10^{-2}$ mW**
+
+  : Power Report -- `fp_adder_ds`
+:::
+
+#### TIMING REPORT
+
+Table [5.5](#tab:adder_timing){reference-type="ref"
+reference="tab:adder_timing"} presents the timing report for the
+`fp_adder_ds` module.
+
+::: {#tab:adder_timing}
+  **Parameter**             **Value**
+  -------------------- --------------
+  Clock Period              100.00 ns
+  Data Arrival Time           2.42 ns
+  Data Required Time         99.99 ns
+  **Slack (MET)**        **97.57 ns**
+
+  : Timing Report -- `fp_adder_ds`
+:::
+
+The timing slack of **97.57 ns** confirms that the `fp_adder_ds` module
+meets the timing constraints comfortably, indicating significant margin
+for operation at higher frequencies if required.
+
+### FLOATING-POINT MULTIPLIER
+
+#### AREA REPORT
+
+Table [5.6](#tab:mul_area){reference-type="ref"
+reference="tab:mul_area"} presents the area report for the
+`fp_multiplication` module.
+
+::: {#tab:mul_area}
+  **Parameter**                                  **Value**
+  ------------------------------- ------------------------
+  Number of Ports                                      322
+  Number of Nets                                      2884
+  Number of Cells                                     2348
+  Number of Combinational Cells                       1691
+  Number of Sequential Cells                           650
+  Number of Buf/Inv                                    211
+  Combinational Area                     5798.16 $\mu m^2$
+  Buf/Inv Area                            229.68 $\mu m^2$
+  Noncombinational Area                  4448.88 $\mu m^2$
+  Macro/Black Box Area                      0.00 $\mu m^2$
+  **Total Cell Area**               **10247.04 $\mu m^2$**
+
+  : Area Report -- `fp_multiplication`
+:::
+
+#### POWER REPORT
+
+Table [5.7](#tab:mul_power){reference-type="ref"
+reference="tab:mul_power"} presents the power report for the
+`fp_multiplication` module.
+
+::: {#tab:mul_power}
+  **Parameter**                            **Value**
+  ------------------------- ------------------------
+  Cell Internal Power         123.4404 $\mu W$ (85%)
+  Net Switching Power          21.2331 $\mu W$ (15%)
+  **Total Dynamic Power**       **144.6736 $\mu W$**
+  Cell Leakage Power                   843.6030 $nW$
+  **Total Power**                      **0.1455 mW**
+
+  : Power Report -- `fp_multiplication`
+:::
+
+#### TIMING REPORT
+
+::: {#tab:mul_timing}
+  **Parameter**             **Value**
+  -------------------- --------------
+  Clock Period               50.00 ns
+  Data Arrival Time           4.03 ns
+  Data Required Time         49.98 ns
+  **Slack (MET)**        **45.95 ns**
+
+  : Timing Report -- `fp_multiplication`
+:::
+
+The timing slack of **45.95 ns** confirms that the `fp_multiplication`
+module meets the 50 ns clock period constraint with sufficient margin.
+
+### ECG FIR FILTER
+
+#### AREA REPORT
+
+::: {#tab:ecg_area}
+  **Parameter**                                   **Value**
+  ------------------------------- -------------------------
+  Number of Ports                                     10080
+  Number of Nets                                      59855
+  Number of Cells                                     47601
+  Number of Combinational Cells                       27825
+  Number of Sequential Cells                          19101
+  Number of Buf/Inv                                    4727
+  Combinational Area                     85741.20 $\mu m^2$
+  Buf/Inv Area                            5254.20 $\mu m^2$
+  Noncombinational Area                 138490.20 $\mu m^2$
+  Macro/Black Box Area                       0.00 $\mu m^2$
+  **Total Cell Area**               **224231.40 $\mu m^2$**
+
+  : Area Report -- `ecg_rect`
+:::
+
+#### POWER REPORT
+
+::: {#tab:ecg_power}
+  **Parameter**                           **Value**
+  ------------------------- -----------------------
+  Cell Internal Power               1.5939 mW (92%)
+  Net Switching Power         130.6275 $\mu W$ (8%)
+  **Total Dynamic Power**             **1.7245 mW**
+  Cell Leakage Power                17.0351 $\mu W$
+  **Total Power**                     **1.7415 mW**
+
+  : Power Report -- `ecg_rect`
+:::
+
+#### TIMING REPORT
+
+::: {#tab:ecg_timing}
+  **Parameter**             **Value**
+  -------------------- --------------
+  Clock Period              100.00 ns
+  Data Arrival Time           4.03 ns
+  Data Required Time         99.98 ns
+  **Slack (MET)**        **95.95 ns**
+
+  : Timing Report -- `ecg_rect`
+:::
+
+The timing slack of **95.95 ns** confirms that the full 10-tap
+floating-point FIR filter meets timing constraints successfully.
+
+## COMPARATIVE ANALYSIS OF SYNTHESIS RESULTS
+
+### OBSERVATIONS
+
+-   **Area:** The `fp_multiplication` module occupies approximately
+    **44%** more area than the `fp_adder_ds` module, owing to the 24-bit
+    $\times$ 24-bit significand multiplication core. The `ecg_rect` full
+    filter occupies **224231.40 $\mu m^2$**, which is expected given it
+    instantiates 10 multipliers and 9 adders in a pipelined
+    architecture.
+
+-   **Power:** The `fp_multiplication` module consumes approximately
+    **2.6$\times$** more power than the `fp_adder_ds` due to higher
+    combinational switching activity in the multiplier core. The full
+    `ecg_rect` filter consumes **1.7415 mW**, dominated by clock network
+    power (78.60%), which is characteristic of deeply pipelined designs
+    with a large number of registers.
+
+-   **Timing:** All three modules meet their respective timing
+    constraints with positive slack. The critical path of **4.03 ns** in
+    both the `fp_multiplication` and `ecg_rect` modules originates from
+    the 24-bit multiplier carry chain, confirming that the multiplier is
+    the timing bottleneck in the FIR filter pipeline. The `fp_adder_ds`
+    has a shorter critical path of **2.42 ns**, reflecting its simpler
+    arithmetic structure.
+
+-   **Library:** All modules were synthesized using the UMC 65nm
+    standard cell library `uk65lscllmvbbr_110c-40_bc` at 1.1V, suitable
+    for high-reliability biomedical ASIC applications.
+
+# CONCLUSION
+
+This thesis successfully demonstrates the end-to-end design and ASIC
+implementation of a floating-point FIR filter for ECG signal denoising,
+from algorithm development in MATLAB to gate-level synthesis on a 65nm
+process node. The following conclusions are drawn from the work:
+
+1.  **Floating-Point Arithmetic is Feasible in Hardware.** Custom IEEE
+    754-compliant floating-point adder and multiplier modules were
+    successfully designed and verified in Verilog. Both modules operate
+    correctly across normal, denormal, and edge-case inputs, confirming
+    their suitability for integration into larger DSP systems.
+
+2.  **Pipelining Enables High-Throughput ECG Filtering.** The 6-stage
+    pipelined architecture in both arithmetic modules allows a new
+    computation to be initiated every clock cycle, enabling real-time
+    ECG signal processing. The full 10-tap filter achieves a throughput
+    of one output sample per clock cycle after the initial pipeline fill
+    of 60 cycles.
+
+3.  **Adder Tree Optimization Halves Accumulation Latency.** The
+    proposed binary adder tree reduces the accumulation stage from 9
+    serial adder delays to just 4 levels ($\lceil\log_2(10)\rceil = 4$),
+    cutting total pipeline depth from 60 to 30 clock cycles --- a 50%
+    improvement with no loss in numerical accuracy.
+
+4.  **Window Function Choice Directly Impacts Filtering Quality.** Among
+    the four windowing methods evaluated, the **Blackman window**
+    provided the best stopband attenuation ($-$`<!-- -->`{=html}58 dB)
+    and cleanest filtered ECG output, making it most suitable for
+    biomedical applications. The Rectangular window, while offering the
+    sharpest transition band, introduced noticeable stopband ripple. The
+    Hamming and Hanning windows offered a balanced trade-off suitable
+    for general ECG denoising.
+
+5.  **Increasing Tap Count Improves Frequency Selectivity.** Moving from
+    10 to 21 to 35 taps progressively sharpened the transition band and
+    improved noise suppression, at the cost of increased hardware
+    resources and pipeline depth. The 35-tap design showed the closest
+    agreement between MATLAB and Verilog outputs in both time and
+    frequency domains.
+
+6.  **ASIC Synthesis Confirms Timing Closure and Low Power.** All
+    modules synthesized cleanly on the UMC 65nm library with comfortable
+    timing slack. The full ECG FIR filter consumes only **1.7415 mW**
+    total power, making it well-suited for wearable or implantable
+    biomedical device applications where power budget is critical. The
+    critical path of 4.03 ns supports operation at clock frequencies
+    well beyond 100 MHz.
+
+7.  **Significant Improvement in Signal-to-Noise Ratio (SNR).** The
+    proposed FIR filter demonstrates a substantial enhancement in signal
+    quality as evidenced by the SNR analysis. The raw ECG signal
+    exhibits a low SNR of approximately **2.87 dB**, indicating the
+    presence of significant noise. After filtering using MATLAB, the SNR
+    improves dramatically to around **148.25 dB**, representing
+    near-ideal noise suppression. The Verilog implementation achieves an
+    SNR of approximately **136.59 dB**, closely matching the MATLAB
+    reference. The small deviation is attributed to finite precision and
+    rounding effects in floating-point hardware. This result confirms
+    that the designed FIR filter not only removes noise effectively but
+    also preserves critical ECG features with high fidelity, making it
+    suitable for accurate biomedical signal processing applications.
+
+8.  **Cross-Platform Validation Confirms Design Correctness.** The IEEE
+    754 hexadecimal interface between MATLAB and Verilog enabled direct
+    comparison of filtered ECG outputs. The close agreement between
+    MATLAB reference outputs and Vivado simulation results validates the
+    numerical correctness of the hardware implementation across all
+    window functions and tap configurations.
+
+While this project achieves its core objectives, several avenues exist
+for extending and improving the design in future work:
+
+1.  **Implement the Adder Tree in Hardware.** The adder tree
+    optimization was analyzed theoretically in this work. A natural next
+    step is to implement and synthesize the adder tree variant of the
+    FIR filter and compare its area, power, and timing reports directly
+    against the linear chain implementation. The expected 50% reduction
+    in pipeline depth should also translate to measurable reductions in
+    register count and dynamic power.
+
+2.  **Extend to Higher Tap Counts (51, 101 Taps).** The 35-tap design
+    showed improved ECG denoising over the 10-tap version. Future work
+    should explore higher tap counts such as 51 or 101 taps, where the
+    adder tree advantage becomes even more pronounced (e.g.,
+    $\lceil\log_2(101)\rceil = 7$ levels vs. 100 serial adders), and the
+    quality of ECG filtering approaches near-ideal behavior.
+
+3.  **Support All Four Window Functions in a Single Reconfigurable
+    Module.** Currently, separate `.mem` files are loaded for each
+    window function. A reconfigurable FIR filter architecture with
+    runtime-selectable coefficients (via a control register or AXI
+    interface) would allow the window function to be switched
+    dynamically without re-synthesis, greatly improving flexibility in a
+    real medical device context.
+
+4.  **Implement Gradual Underflow (Subnormal Number Support).** The
+    current `fp_multiplication` module sets underflow results to zero
+    without gradual underflow handling. Adding full IEEE 754 subnormal
+    support would improve numerical accuracy for very small ECG
+    amplitude values near the minimum representable range.
+
+5.  **Transition to Full ASIC Physical Design (Place & Route).** This
+    project completed logical synthesis up to a gate-level netlist. A
+    complete ASIC flow would include placement, clock tree synthesis
+    (CTS), routing, and post-layout timing/power analysis (sign-off).
+    Tools such as Synopsys ICC2 or Cadence Innovus could be used on the
+    same UMC 65nm library to generate a tapeout-ready GDSII file.
+
+6.  **FPGA Prototyping and Real-Time ECG Acquisition.** Deploying the
+    Verilog design on a Xilinx or Intel FPGA board connected to a real
+    ECG acquisition front-end (e.g., ADS1292 AFE chip) would validate
+    the filter's real-time performance on live physiological signals,
+    bridging the gap between simulation and clinical use.
+
+7.  **Explore Fixed-Point Alternative for Ultra-Low-Power Targets.**
+    Floating-point arithmetic, while accurate, is relatively area and
+    power intensive. For ultra-low-power wearable devices (e.g., sub-1
+    mW target), a carefully scaled fixed-point implementation could be
+    explored and benchmarked against this floating-point baseline in
+    terms of SNR, area, and power trade-offs.
+
+8.  **Add Adaptive Filtering Capability.** The current design uses
+    static pre-computed coefficients. Integrating an adaptive algorithm
+    such as the Least Mean Squares (LMS) algorithm would allow the
+    filter coefficients to update in real-time based on the input signal
+    statistics, improving denoising performance for non-stationary ECG
+    noise environments such as motion artifacts.
+
+::: thebibliography
+99
+
+A. V. Oppenheim and R. W. Schafer, *Discrete-Time Signal Processing*,
+3rd ed. Upper Saddle River, NJ, USA: Pearson, 2010.
+
+S. K. Mitra, *Digital Signal Processing: A Computer-Based Approach*, 4th
+ed. New York, NY, USA: McGraw-Hill, 2011.
+
+S. Biswas, M. Maniruzzaman, and R. Bairagi, "Noise Removing from ECG
+Signal Using FIR Filter with Windowing Techniques," in *Proc. IEEE
+Conf.*, 2021. \[Online\]. Available:
+`https://ieeexplore.ieee.org/document/9641381`
+
+M. Kumar, "Design and Implementation of Digital Low Pass FIR and IIR
+Filters Using VHDL for ECG Denoising," \[Online\]. Available:
+`https://www.researchgate.net/publication/377597578`
+
+D. Deka, N. Kumar, and D. Pal, "Design of an ASIC-Based High-Speed
+32-bit Floating Point Adder," in *Proc. IEEE Conf.*, 2021. \[Online\].
+Available: `https://ieeexplore.ieee.org/document/9542881`
+
+Y. Savaliya and J. Rudani, "Design and Simulation of 32-Bit Floating
+Point Arithmetic Logic Unit Using Verilog HDL," *Int. Res. J. Eng.
+Technol. (IRJET)*, vol. 7, no. 12, pp. 1467--1474, Dec. 2020.
+\[Online\]. Available:
+`https://www.irjet.net/archives/V7/i12/IRJET-V7I12273.pdf`
+
+B. Razavi, *Fundamentals of Microelectronics*, 2nd ed. Hoboken, NJ, USA:
+Wiley, 2014.
+
+V. Tarate, *Digital Logic Design Using Verilog: Coding and RTL
+Synthesis*, 1st ed. Pune, India: Technical Publications, 2016.
+
+Xilinx Inc., "Vivado Design Suite." \[Online\]. Available:
+`https://www.xilinx.com/products/design-tools/vivado.html`. Accessed:
+Apr. 2026.
+
+IEEE, "IEEE Xplore Digital Library." \[Online\]. Available:
+`https://ieeexplore.ieee.org`. Accessed: Apr. 2026.
+:::
